@@ -52,7 +52,7 @@ def perform_automation():
             
         print("7. Waiting for first 'Rekam Kehadiran' button...")
         rekam_button = WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, "//button[@click='modalOpen=true; getLocation()']"))
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Rekam Kehadiran')]"))
         )
         
         print("8. Clicking first 'Rekam Kehadiran' button...")
@@ -63,7 +63,10 @@ def perform_automation():
         
         print("10. Clicking the second 'Rekam Kehadiran' button inside the modal...")
         final_rekam_button = WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, "//button[contains(@x-on:click, '$wire.clock()')]"))
+            lambda d: d.execute_script(
+                "const btn = Array.from(document.querySelectorAll('button')).find(b => b.getAttribute('wire:target') === 'clock');"
+                "return (btn && !btn.disabled) ? btn : null;"
+            )
         )
         driver.execute_script("arguments[0].click();", final_rekam_button)
         
@@ -471,6 +474,11 @@ HTML_PAGE = """<!DOCTYPE html>
     setTimeout(() => {
         wheelContainers.forEach(c => updateWheelStyle(c));
     }, 150);
+    
+    // Gracefully shut down python backend when the user closes the app window
+    window.addEventListener('beforeunload', () => {
+        navigator.sendBeacon('/api/shutdown');
+    });
   </script>
 <!-- END: Logic Handlers -->
 </body></html>
@@ -528,7 +536,23 @@ def test():
     threading.Thread(target=perform_automation, daemon=True).start()
     return jsonify({"status": "ok"})
 
+@app.route('/api/shutdown', methods=['POST'])
+def shutdown():
+    print("UI Window Closed. Shutting down system entirely...")
+    threading.Thread(target=lambda: (time.sleep(0.5), os._exit(0))).start()
+    return jsonify({"status": "ok"})
+
 import sys
+
+# --- 1. SINGLE INSTANCE LOCK ---
+# We bind a hidden socket to a specific port to prove we are the only running worker. 
+# If a user double-clicks the app multiple times, ghost instances will fail to bind and instantly exit safely.
+lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    lock_socket.bind(('127.0.0.1', 54321))
+except socket.error:
+    print("Application is already actively running in the background. Exiting.")
+    sys.exit(0)
 
 if __name__ == "__main__":
     import logging
@@ -560,19 +584,29 @@ if __name__ == "__main__":
     print(f"Server is exclusively running on: {url}")
     print(f"==============================================\n")
     
+    import subprocess
+    
     # Schedule the browser to open only exactly after flask starts absorbing connections
     def safe_browser_open():
         time.sleep(1.5)
+        edge_path = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
         try:
-            webbrowser.open_new(url)
+            if os.path.exists(edge_path):
+                print("Launching native Edge App Mode...")
+                subprocess.Popen([edge_path, f"--app={url}"])
+            else:
+                webbrowser.open_new(url)
             print("UI successfully launched in browser.")
         except Exception as e:
             print(f"Please open your browser manually to: {url}")
             
     threading.Thread(target=safe_browser_open, daemon=True).start()
     
-    print("Press Ctrl+C to Exit the whole application entirely.")
+    print("Press Ctrl+C or Close the UI Window to Exit the application entirely.")
     
-    # Flask securely binds to the main OS thread to perfectly serve requests 100% reliably
-    app.run(host="127.0.0.1", port=assigned_port, threaded=True, debug=False, use_reloader=False)
+    try:
+        # Flask securely binds to the main OS thread to perfectly serve requests 100% reliably
+        app.run(host="127.0.0.1", port=assigned_port, threaded=True, debug=False, use_reloader=False)
+    except KeyboardInterrupt:
+        pass
 

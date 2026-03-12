@@ -86,15 +86,6 @@ def perform_automation():
     except Exception as e:
         print(f"Automation error: {e}")
 
-def run_schedule():
-    while True:
-        if state['is_running']:
-            schedule.run_pending()
-        time.sleep(1)
-
-# Start schedule thread immediately
-t = threading.Thread(target=run_schedule, daemon=True)
-t.start()
 
 # --- Web UI Backend ---
 HTML_PAGE = """<!DOCTYPE html>
